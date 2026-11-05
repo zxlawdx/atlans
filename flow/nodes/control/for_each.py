@@ -142,6 +142,15 @@ class ForEachNode(BaseNode):
         if "items" in inputs:
             raw = inputs["items"]
             shared = {key: value for key, value in inputs.items() if key != "items"}
+        elif len(inputs) == 1 and isinstance(next(iter(inputs.values())), list):
+            # Uma única conexão anônima pode fornecer a lista.
+            raw = next(iter(inputs.values()))
+            shared = {}
+        elif isinstance(configured, list) and configured:
+            # Um ScheduleTrigger pode ligar-se ao ForEach só para iniciar a
+            # execução; nesse caso seus metadados não substituem a lista
+            # JSON configurada manualmente no nó.
+            raw, shared = configured, {}
         elif len(inputs) == 1:
             raw = next(iter(inputs.values()))
             shared = {}
