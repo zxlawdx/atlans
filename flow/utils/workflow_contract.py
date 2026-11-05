@@ -122,7 +122,7 @@ def validate_inputs_mapping(
 
 
 def collect_subworkflow_references(definition: Dict[str, Any]) -> list[Dict[str, Any]]:
-    """Lists all SubWorkflow nodes in the definition with their workflowHash
+    """Lists SubWorkflow and ForEach nodes in the definition with their workflowHash
     + inputsMapping. Used for cross-workflow validation on save."""
     refs: list[Dict[str, Any]] = []
     nodes = definition.get("nodes") if isinstance(definition, dict) else None
@@ -131,7 +131,7 @@ def collect_subworkflow_references(definition: Dict[str, Any]) -> list[Dict[str,
         # (`_referencias_alteradas`), and one written by hand or by an older
         # client — a numeric hash, a node that is not an object — made every
         # save of that workflow a 500, the one that would fix it included.
-        if not isinstance(n, dict) or n.get("name") != "SubWorkflow":
+        if not isinstance(n, dict) or n.get("name") not in ("SubWorkflow", "ForEach"):
             continue
         props = n.get("properties")
         props = props if isinstance(props, dict) else {}
@@ -142,11 +142,20 @@ def collect_subworkflow_references(definition: Dict[str, Any]) -> list[Dict[str,
         mapping = props.get("inputsMapping") or {}
         if not wh:
             continue
-        refs.append({
+        ref = {
             "node_id": n.get("id"),
             "workflow_hash": wh,
             "inputs_mapping": mapping if isinstance(mapping, dict) else {},
-        })
+        }
+        if n.get("name") == "ForEach":
+            # Keep the legacy SubWorkflow reference shape unchanged; only
+            # ForEach needs the extra contract checks.
+            ref.update(
+                node_type="ForEach",
+                item_key=str(props.get("itemKey") or "item").strip(),
+                index_key=str(props.get("indexKey") or "index").strip(),
+            )
+        refs.append(ref)
     return refs
 
 
@@ -254,19 +263,20 @@ async def validate_subworkflow_references_against_db(
         wh = ref["workflow_hash"]
         node_id = ref["node_id"]
         target = targets_by_hash.get(wh)
+        node_type = ref.get("node_type", "SubWorkflow")
 
         # The query already filtered by workspace; the second condition is belt and
         # suspenders (a session that returns rows from outside) and reads as
         # nonexistent BEFORE looking at the state, so as not to leak even that.
         if target is None or (workspace_id and target.workspace_id != workspace_id):
             errors.append(
-                f"Node SubWorkflow '{node_id}' aponta para workflow '{wh}' "
+                f"Node {node_type} '{node_id}' aponta para workflow '{wh}' "
                 "que nao existe."
             )
             continue
         if not target.flag_ative:
             errors.append(
-                f"Node SubWorkflow '{node_id}' aponta para workflow '{wh}' "
+                f"Node {node_type} '{node_id}' aponta para workflow '{wh}' "
                 "que esta desativado."
             )
             continue
@@ -283,14 +293,14 @@ async def validate_subworkflow_references_against_db(
         # empty `ports` means passthrough, not absence of a contract.
         if not contract.get("has_output_node"):
             errors.append(
-                f"Node SubWorkflow '{node_id}' aponta para workflow '{wh}' "
+                f"Node {node_type} '{node_id}' aponta para workflow '{wh}' "
                 "sem node SubWorkflowOutput: não há saída declarada para consumir."
             )
             continue
 
         if contract.get("output_node_count", 0) > 1:
             errors.append(
-                f"Node SubWorkflow '{node_id}' aponta para workflow '{wh}' com "
+                f"Node {node_type} '{node_id}' aponta para workflow '{wh}' com "
                 f"{contract['output_node_count']} nodes SubWorkflowOutput. "
                 "Apenas um é permitido."
             )
@@ -300,15 +310,32 @@ async def validate_subworkflow_references_against_db(
         # would be silently ignored at runtime.
         if ref["inputs_mapping"] and not contract.get("has_input_node"):
             errors.append(
-                f"Node SubWorkflow '{node_id}' mapeia entradas para o workflow "
+                f"Node {node_type} '{node_id}' mapeia entradas para o workflow "
                 f"'{wh}', que não tem SubWorkflowInput. Os dados não chegariam "
                 "ao sub-fluxo — adicione o node de entrada ou remova o mapeamento."
             )
             continue
 
+        # A repeated child MUST accept the item and its index. A missing
+        # SubWorkflowInput (or missing named ports) discards the iteration data.
+        if node_type == "ForEach":
+            if not contract.get("has_input_node"):
+                errors.append(
+                    f"Node ForEach '{node_id}' exige SubWorkflowInput em '{wh}'."
+                )
+                continue
+            expected = {ref["item_key"], ref["index_key"]}
+            declared = {p["name"] for p in contract.get("inputs") or []}
+            if declared and not expected.issubset(declared):
+                errors.append(
+                    f"Node ForEach '{node_id}' exige portas {sorted(expected)} "
+                    f"em SubWorkflowInput de '{wh}'. Declaradas: {sorted(declared)}."
+                )
+                continue
+
         # Valida inputsMapping contra contrato
         mapping_errors = validate_inputs_mapping(ref["inputs_mapping"], contract)
         for msg in mapping_errors:
-            errors.append(f"Node SubWorkflow '{node_id}' -> workflow '{wh}': {msg}")
+            errors.append(f"Node {node_type} '{node_id}' -> workflow '{wh}': {msg}")
 
     return errors
