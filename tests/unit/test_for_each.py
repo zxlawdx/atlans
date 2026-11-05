@@ -74,6 +74,13 @@ async def test_receives_items_from_upstream_without_using_static_list():
 
 
 @pytest.mark.asyncio
+async def test_schedule_trigger_can_start_a_configured_list():
+    node = _node(["cuc:a", "codef:b"])
+    output = await node.execute({"timestamp": {"run_at": "2026-11-05"}})
+    assert [result["item"] for result in output["results"]] == ["cuc:a", "codef:b"]
+
+
+@pytest.mark.asyncio
 async def test_accepts_anonymous_single_list_input():
     node = _node()
     output = await node.execute({"result": ["a"]})
