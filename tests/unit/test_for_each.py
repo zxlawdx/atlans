@@ -15,6 +15,7 @@ def _child(*, input_ports=None, output_ports=None, with_input=True) -> dict:
     nodes = [
         {
             "id": "out",
+            "type": "output",
             "name": "SubWorkflowOutput",
             "properties": {"ports": output_ports if output_ports is not None else ["item"]},
         },
@@ -22,6 +23,7 @@ def _child(*, input_ports=None, output_ports=None, with_input=True) -> dict:
     if with_input:
         nodes.insert(0, {
             "id": "in",
+            "type": "trigger",
             "name": "SubWorkflowInput",
             "properties": {"ports": input_ports if input_ports is not None else ["item", "index"]},
         })
