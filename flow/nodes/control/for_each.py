@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from flow.nodes.base import BaseNode
-from flow.nodes.control.sub_workflow import SubWorkflowNode, RESULT_KEY
 from flow.registry import register_node
 from flow.utils.workflow_contract import extract_contract
 from flow.utils.publisher.events import publish_stdout
@@ -195,6 +194,10 @@ class ForEachNode(BaseNode):
                 "itemKey e indexKey devem ser nomes distintos, não reservados "
                 "e sem conflito com outras entradas do ForEach."
             )
+
+        # Import local evita o ciclo de bootstrap:
+        # sub_workflow -> registry -> auto_discover_nodes -> for_each.
+        from flow.nodes.control.sub_workflow import SubWorkflowNode, RESULT_KEY
 
         # Reutiliza o nó original. Não cria outro executor, outro mecanismo de
         # credenciais, nem modifica a regra de grafos acíclicos do Atlans.
